@@ -522,3 +522,258 @@ scrapy crawl countries
 ```
 
 ⇒ Python dictionary will be printed out.
+
+- https://worldometers.info/world-population/population-by-country/
+- a tag => 'https://www.worldometers.info/world-population/mozambique-population/'
+- get `name` of the country and `year`, `population`
+
+ℹ️ vsCode Terminal, switch to `Virtual Workspace`
+
+```bash
+conda activate Virtual_Workspace
+```
+
+```bash
+conda activate ${Virtual_Workspace}
+```
+
+# Part 1, loop
+
+```python
+# -*- coding: utf-8 -*-
+import scrapy
+
+class CountriesSpider(scrapy.Spider):
+    name = 'countries'
+    allowed_domains = ['worldometers.info/']
+    start_urls = [
+        'https://worldometers.info/world-population/population-by-country/']
+
+    def parse(self, response):
+
+        countries = response.xpath("//td/a")
+        # '<a href="/world-population/saint-barthelemy-population/">Saint Barthelemy</a>',
+        #'<a href="/world-population/saint-helena-population/">Saint Helena</a>',
+        #'<a href="/world-population/saint-pierre-and-miquelon-population/">Saint Pierre &amp; Miquelon</a>',
+        #'<a href="/world-population/montserrat-population/">Montserrat</a>',
+        #'<a href="/world-population/falkland-islands-malvinas-population/">Falkland Islands</a>',
+        #'<a href="/world-population/niue-population/">Niue</a>',
+        #'<a href="/world-population/tokelau-population/">Tokelau</a>',
+        # '<a href="/world-population/holy-see-population/">Holy See</a>'
+        for country in countries:
+            # Montserrat, Tokelau ... Holy See
+            name = country.xpath('.//text()').get()
+            # href link를 잡아준다.
+            link = country.xpath('.//@href').get()
+
+            yield {
+                'country_name': name,
+                'country_link': link
+            }
+```
+
+1. 먼저 모든 tag를 잡는다.
+2. loop를 돌리면서 detail한 element로 들어간다. 
+3. 각각의 값을 yield.
+
+# Part 2, make requests
+
+```python
+# -*- coding: utf-8 -*-
+import scrapy
+
+class CountriesSpider(scrapy.Spider):
+    name = 'countries'
+    allowed_domains = ['worldometers.info']  # 필요없는 extra slash를 지워줘야 한다.
+    start_urls = [
+        'https://worldometers.info/world-population/population-by-country/']
+
+    def parse(self, response):
+
+        countries = response.xpath("//td/a")
+        for country in countries:
+            name = country.xpath('.//text()').get()
+            link = country.xpath('.//@href').get()
+
+            # URL이 Relative Path일 때를 대비하여, absolute URL을 만들어준다.
+
+            # 1. One way to make Absolute URL, however this is not the best way
+            # absolute_url = f'https://www.worldometers.info{link}'
+
+            # 2. Second way to make Absolute URL, using `join`
+            # absolute_url = response.urljoin(link)
+
+            # 3. Third way to make Absolute URL, using `response object`
+            yield response.follow(url=link)
+
+            # request `link` fetched with xpath
+
+            # yield scrapy.Request(url=absolute_url)
+
+            ### Error ###
+            # ValueError: Missing scheme in request url: /world-population/china-population/
+            # Scheme in URL is `Http` or `Https`
+            # 이런 에러가 발생하는 이유는, relative URL이기 때문에 scrapy에서 Request를 보내지 못하는 경우다.
+            # 에러를 해결하려면 Absolute URL을 만들어준다.
+            # Solution: make `absoluteURL`
+```
+
+### How to make `Absolute URL` , when it's relative URL
+
+1. hardcoding
+
+    ```python
+    absolute_url = f'https://www.worldometers.info{link}'
+    ```
+
+2. `join`
+
+    ```python
+    absolute_url = response.urljoin(link)
+    ```
+
+3. `response` object
+
+    ```python
+    yield response.follow(url=link)
+    ```
+
+### Possible Errors that can occur while crawling
+
+1. Relative URL `scheme is missing`
+2. extra `/` in `allowed_domains`
+
+    ```python
+    allowed_domains = ['worldometers.info']  # 필요없는 extra slash를 지워줘야 한다.
+    ```
+
+# Part 3, fetch the response from request we sent
+
+- 받은 URL을 통해서 또 다시 url에 들어가서 새로운 데이터 가져오기.
+
+```python
+# -*- coding: utf-8 -*-
+import scrapy
+import logging
+
+class CountriesSpider(scrapy.Spider):
+    name = 'countries'
+    allowed_domains = ['worldometers.info']  # 필요없는 extra slash를 지워줘야 한다.
+    start_urls = [
+        'https://worldometers.info/world-population/population-by-country/']
+
+    # 첫 번째 웹사이트에서 crawling
+    def parse(self, response):
+
+        countries = response.xpath("//td/a")
+        for country in countries:
+            name = country.xpath('.//text()').get()
+            link = country.xpath('.//@href').get()
+
+            # absolute_url = f*https://www.worldometers.info{link}
+            # absolute_url = response.urljoin(link)
+
+            yield response.follow(url=link, callback=self.parse_country)
+
+    # 각각의 a tag의 값을 긁어와서 crawling
+    # Example URL https://www.worldometers.info/world-population/mozambique-population/
+    def parse_country(self, response):
+        # table이 2개 이상일 때 잡는 방법.   (//table)[index]
+        rows = response.xpath(
+            '(//table[@class="table table-striped table-bordered table-hover table-condensed table-list"])[1]/tbody/tr')
+        for row in rows:
+            year = row.xpath('.//td[1]/text()').get()  # table row는 1부터 시작함.
+            population = row.xpath('.//td[2]/strong/text()').get()
+            yield {
+                'year': year,
+                'population': population
+            }
+```
+
+# Part 4, give meta data to second function
+
+```python
+# -*- coding: utf-8 -*-
+import scrapy
+import logging
+
+#  Practice
+# 'https://worldometers.info/world-population/population-by-country/'
+# a tag => 'https://www.worldometers.info/world-population/mozambique-population/'
+# get `name` of the country and `year`, `population`
+
+class CountriesSpider(scrapy.Spider):
+    name = 'countries'
+    allowed_domains = ['worldometers.info']  # 필요없는 extra slash를 지워줘야 한다.
+    start_urls = [
+        'https://worldometers.info/world-population/population-by-country/']
+
+    # 첫 번째 웹사이트에서 crawling
+    def parse(self, response):
+
+        countries = response.xpath("//td/a")
+        for country in countries:
+            name = country.xpath('.//text()').get()
+            link = country.xpath('.//@href').get()
+
+            # absolute_url = f*https://www.worldometers.info{link}
+            # absolute_url = response.urljoin(link)
+
+            # give meta information
+            yield response.follow(url=link, callback=self.parse_country, meta={'country_name': name})
+
+    # 각각의 a tag의 값을 긁어와서 crawling
+    # Example URL https://www.worldometers.info/world-population/mozambique-population/
+    def parse_country(self, response):
+        # retreive meta information
+        name = response.request.meta['country_name']
+        # table이 2개 이상일 때 잡는 방법.   (//table)[index]
+        rows = response.xpath(
+            '(//table[@class="table table-striped table-bordered table-hover table-condensed table-list"])[1]/tbody/tr')
+        for row in rows:
+            year = row.xpath('.//td[1]/text()').get()  # table row는 1부터 시작함.
+            population = row.xpath('.//td[2]/strong/text()').get()
+            yield {
+                'name': name,
+                'year': year,
+                'population': population
+            }
+```
+
+- meta={'country_name' : name}
+- response.request.meta['country_name']
+
+# Practice 1
+
+- https://worldometers.info/world-population/population-by-country/
+- a tag => 'https://www.worldometers.info/world-population/mozambique-population/'
+- get `name` of the country and `year`, `population`
+
+# Practice 2
+
+### **Debt to GDP ratio by country**
+
+So your job is to scrape the **national debt to GDP** for each country listed in this website '[http://worldpopulationreview.com/countries/countries-by-national-debt/](http://worldpopulationreview.com/countries/countries-by-national-debt/)'.
+
+![https://udemy-images.s3.amazonaws.com/redactor/raw/2019-09-18_08-48-58-40f744fdffa5df11d8765597398a24b6.PNG](https://udemy-images.s3.amazonaws.com/redactor/raw/2019-09-18_08-48-58-40f744fdffa5df11d8765597398a24b6.PNG)
+
+The population is not required to be scraped, however if you want to scrape it that's fine.
+
+Now since this will be your first exercise, I'm gonna list below the steps you need to follow:
+
+1. First thing first please scaffold a new project called '**national_debt**' and then generate a spider within that same project called "**gdp_debt**"
+2. The website does use the "http" protocol by default so there is no need to modify that in the '**start_urls'** since by default Scrapy will use "**http**"
+3. Next inside the **parse** method make sure to iterate(loop) through all rows and yield two keys '**country_name**' and '**gdp_debt**'
+4. Finally make sure to execute the spider
+
+**A sample of the output:**
+
+![https://udemy-images.s3.amazonaws.com/redactor/raw/2019-09-18_08-59-05-95722bf60d7539375501f52446ec6053.PNG](https://udemy-images.s3.amazonaws.com/redactor/raw/2019-09-18_08-59-05-95722bf60d7539375501f52446ec6053.PNG)
+
+If you get stuck feel free to reach me out in the Q&A section.
+
+Solution source code can be downloaded from this link '[https://www.dropbox.com/sh/7etr8cmrc9av5mr/AAB0QmO4Cdcg2dpqBHlTXbDta?dl=0](https://www.dropbox.com/sh/7etr8cmrc9av5mr/AAB0QmO4Cdcg2dpqBHlTXbDta?dl=0)' **please don't check it out unless you've done the exercise and you want to see my solution.**
+
+Good luck,
+
+Ahmed.
